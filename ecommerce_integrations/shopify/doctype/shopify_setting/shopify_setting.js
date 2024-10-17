@@ -1,5 +1,21 @@
 // Copyright (c) 2021, Frappe and contributors
 // For license information, please see LICENSE
+frappe.ui.form.on('Shopify Settings', {
+  refresh: function(frm) {
+    if (frm.doc.enable_shopify) {
+      frm.add_custom_button(__('Import All Customers'), function() {
+        frappe.call({
+          method: 'ecommerce_integrations.shopify.doctype.shopify_settings.shopify_settings.import_all_customers',
+          callback: function(r) {
+            if (!r.exc) {
+              frappe.msgprint(__('All customers have been imported successfully.'));
+            }
+          }
+        });
+      });
+    }
+  }
+});
 
 frappe.provide("ecommerce_integrations.shopify.shopify_setting");
 
