@@ -1,3 +1,5 @@
+# shopify_setting.py
+
 # Copyright (c) 2021, Frappe and contributors
 # For license information, please see LICENSE
 
@@ -129,12 +131,13 @@ def setup_custom_fields():
         ],
         "Customer": [
             dict(
-                fieldname=CUSTOMER_ID_FIELD,
-                label="Shopify Customer Id",
+                fieldname="shopify_customer_id",
+                label="Shopify Customer ID",
                 fieldtype="Data",
-                insert_after="series",
+                insert_after="customer_name",
                 read_only=1,
                 print_hide=1,
+                unique=1,  # Ensure uniqueness to prevent duplicates
             )
         ],
         "Supplier": [
@@ -149,12 +152,13 @@ def setup_custom_fields():
         ],
         "Address": [
             dict(
-                fieldname=ADDRESS_ID_FIELD,
-                label="Shopify Address Id",
+                fieldname="shopify_address_id",
+                label="Shopify Address ID",
                 fieldtype="Data",
-                insert_after="fax",
+                insert_after="address_title",
                 read_only=1,
                 print_hide=1,
+                unique=1,  # Ensure uniqueness to prevent duplicates
             )
         ],
         "Sales Order": [
