@@ -264,7 +264,7 @@ def setup_custom_fields():
 # Added the import_all_customers function below
 @frappe.whitelist()
 def import_all_customers():
-    from ecommerce_integrations.shopify import sync_customers
+from ecommerce_integrations.shopify.sync_customers import sync_all_customers
 
     try:
         enqueue(sync_customers.sync_all_customers, queue='long', timeout=6000)
