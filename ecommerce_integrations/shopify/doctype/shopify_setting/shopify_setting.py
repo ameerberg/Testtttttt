@@ -131,7 +131,7 @@ def setup_custom_fields():
         ],
         "Customer": [
             dict(
-                fieldname="shopify_customer_id",
+                fieldname="custom_shopify_customer_id",
                 label="Shopify Customer ID",
                 fieldtype="Data",
                 insert_after="customer_name",
@@ -217,7 +217,7 @@ def setup_custom_fields():
                 fieldname=ORDER_STATUS_FIELD,
                 label="Shopify Order Status",
                 fieldtype="Small Text",
-                insert_after="ORDER_NUMBER_FIELD",
+                insert_after=ORDER_NUMBER_FIELD,
                 read_only=1,
                 print_hide=1,
             ),
