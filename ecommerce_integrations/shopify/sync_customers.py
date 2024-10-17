@@ -2,7 +2,7 @@
 
 import frappe
 from frappe import _
-from .shopify_requests import get_shopify_customers
+from .connection import get_shopify_customers
 
 def sync_all_customers():
     customers = get_shopify_customers()
