@@ -32,7 +32,7 @@ from ecommerce_integrations.shopify.utils import (
     ensure_old_connector_is_disabled,
     migrate_from_old_connector,
 )
-from ecommerce_integrations.shopify.sync_customers import sync_all_customers
+from ecommerce_integrations.shopify.sync_customers import ShopifyCustomer
 
 
 class ShopifySetting(SettingController):
