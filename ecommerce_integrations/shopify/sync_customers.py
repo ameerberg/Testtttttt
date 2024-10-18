@@ -3,6 +3,7 @@ from typing import Optional
 import frappe
 from frappe import _
 from shopify.resources import Customer
+import phonenumbers
 
 from ecommerce_integrations.shopify.connection import temp_shopify_session, get_shopify_customers
 from ecommerce_integrations.shopify.constants import SETTING_DOCTYPE, MODULE_NAME
@@ -176,6 +177,14 @@ def handle_customer_contacts(customer, customer_data):
                 "Shopify Contact Import Warning"
             )
             return
+
+        # Normalize phone number
+        try:
+            parsed_phone = phonenumbers.parse(phone, "US")  # Adjust the default country as needed
+            phone = phonenumbers.format_number(parsed_phone, phonenumbers.PhoneNumberFormat.E164)
+        except phonenumbers.NumberParseException:
+            frappe.log_error(f"Invalid phone number format for customer {customer.name}: {phone}", "Shopify Contact Import Warning")
+            return  # Skip contact creation if the phone number is invalid
 
         # Find existing contact by phone number only
         existing_contact_name = frappe.db.get_value('Contact', {
