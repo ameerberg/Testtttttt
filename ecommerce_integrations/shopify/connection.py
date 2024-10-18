@@ -7,6 +7,7 @@ import base64
 import json
 import requests
 import time
+from urllib.parse import urlparse, parse_qs
 
 import frappe
 from frappe import _
@@ -27,16 +28,16 @@ def temp_shopify_session(func):
 
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
-        if frappe.flags.in_test:
+        if getattr(frappe.flags, 'in_test', False):
             return func(*args, **kwargs)
 
         setting = frappe.get_doc(SETTING_DOCTYPE)
         if setting.is_enabled():
             shopify_url = setting.shopify_url
             api_version = API_VERSION
-            password = setting.get_password("password")
+            password = setting.get_password("password")  # Ensure this retrieves the API Password
 
-            # Debug: Log individual components
+            # Debug: Log individual components (Avoid logging sensitive info)
             frappe.logger().debug(f"Shopify URL: {shopify_url}")
             frappe.logger().debug(f"API Version: {api_version}")
             frappe.logger().debug(f"Password Retrieved: {'Yes' if password else 'No'}")
@@ -60,7 +61,7 @@ def temp_shopify_session(func):
 
 @temp_shopify_session
 def get_shopify_customers():
-    """Fetch all customers from Shopify using cursor-based pagination with requests."""
+    """Fetch all customers from Shopify using cursor-based pagination with page_info."""
     customers = []
     try:
         settings = frappe.get_doc(SETTING_DOCTYPE)
@@ -70,11 +71,12 @@ def get_shopify_customers():
             "Content-Type": "application/json",
             "X-Shopify-Access-Token": password
         }
-        params = {'limit': 250}
-        last_id = None
+        params = {'limit': 250}  # Maximum allowed by Shopify
+        next_page_info = None
+
         while True:
-            if last_id:
-                params['since_id'] = last_id
+            if next_page_info:
+                params['page_info'] = next_page_info
             frappe.logger().debug(f"Fetching customers with params: {params}")
             response = requests.get(
                 f"https://{shopify_url}/admin/api/{API_VERSION}/customers.json",
@@ -85,18 +87,44 @@ def get_shopify_customers():
             if response.status_code != 200:
                 frappe.log_error(response.text, 'Shopify Customer Fetch Error')
                 frappe.throw(f"Error fetching customers from Shopify: {response.text}")
+
             data = response.json()
             customers_page = data.get('customers', [])
-            if not customers_page:
-                break
             customers.extend(customers_page)
-            last_id = customers_page[-1].get('id')
-            if len(customers_page) < 250:
-                break
+            frappe.logger().debug(f"Fetched {len(customers_page)} customers. Total so far: {len(customers)}")
+
+            # Parse Link header for pagination
+            link_header = response.headers.get('Link', '')
+            next_page_info = None
+
+            if link_header:
+                links = link_header.split(',')
+                for link in links:
+                    parts = link.split(';')
+                    if len(parts) != 2:
+                        continue
+                    url_part, rel_part = parts
+                    url_part = url_part.strip().strip('<>').strip()
+                    rel_part = rel_part.strip()
+                    if rel_part == 'rel="next"':
+                        parsed_url = urlparse(url_part)
+                        query_params = parse_qs(parsed_url.query)
+                        if 'page_info' in query_params:
+                            next_page_info = query_params['page_info'][0]
+                            frappe.logger().debug(f"Next page_info found: {next_page_info}")
+                        break
+
+            if not next_page_info:
+                frappe.logger().debug("No further pages found. Ending customer fetch.")
+                break  # No more pages
+
             time.sleep(1)  # Sleep for 1 second between requests to respect rate limits
+
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), 'Shopify Customer Fetch Error')
         frappe.throw(f"Error fetching customers from Shopify: {e}")
+
+    frappe.logger().debug(f"Total customers fetched: {len(customers)}")
     return customers
 
 
