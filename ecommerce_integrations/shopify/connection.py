@@ -1,16 +1,17 @@
 # connection.py
 
-import base64
 import functools
-import hashlib
 import hmac
+import hashlib
+import base64
 import json
 import requests
+import time
 
 import frappe
 from frappe import _
-from shopify.resources import Webhook, Customer  # Added Customer import
 from shopify.session import Session
+from shopify.resources import Webhook, Customer
 
 from ecommerce_integrations.shopify.constants import (
     API_VERSION,
@@ -20,7 +21,6 @@ from ecommerce_integrations.shopify.constants import (
 )
 from ecommerce_integrations.shopify.utils import create_shopify_log
 
-import shopify  # Added shopify import
 
 def temp_shopify_session(func):
     """Decorator to manage Shopify API session."""
@@ -57,6 +57,7 @@ def temp_shopify_session(func):
 
     return wrapper
 
+
 @temp_shopify_session
 def get_shopify_customers():
     """Fetch all customers from Shopify using cursor-based pagination with requests."""
@@ -92,39 +93,41 @@ def get_shopify_customers():
             last_id = customers_page[-1].get('id')
             if len(customers_page) < 250:
                 break
+            time.sleep(1)  # Sleep for 1 second between requests to respect rate limits
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), 'Shopify Customer Fetch Error')
         frappe.throw(f"Error fetching customers from Shopify: {e}")
     return customers
 
-def register_s(shopify_url: str, password: str) -> list:
-    """Register required s with Shopify and return registered s."""
-    new_s = []
 
-    # Clear all stale s matching current site URL before registering new ones
-    unregister_s(shopify_url, password)
+def register_webhooks(shopify_url: str, password: str) -> list:
+    """Register required webhooks with Shopify and return registered webhooks."""
+    new_webhooks = []
+
+    # Clear all stale webhooks matching current site URL before registering new ones
+    unregister_webhooks(shopify_url, password)
 
     headers = {
         "Content-Type": "application/json",
         "X-Shopify-Access-Token": password
     }
 
-    for topic in _EVENTS:
+    for topic in WEBHOOK_EVENTS:
         payload = {
-            "": {
+            "webhook": {
                 "topic": topic,
                 "address": get_callback_url(),
                 "format": "json"
             }
         }
         response = requests.post(
-            f"https://{shopify_url}/admin/api/{API_VERSION}/s.json",
+            f"https://{shopify_url}/admin/api/{API_VERSION}/webhooks.json",
             headers=headers,
             data=json.dumps(payload)
         )
         if response.status_code == 201:
-             = response.json().get('')
-            new_s.append()
+            webhook = response.json().get('webhook')
+            new_webhooks.append(webhook)
         else:
             create_shopify_log(
                 status="Error",
@@ -132,9 +135,10 @@ def register_s(shopify_url: str, password: str) -> list:
                 exception=response.json().get('errors')
             )
 
-    return new_s
+    return new_webhooks
 
-def unregister_s(shopify_url: str, password: str) -> None:
+
+def unregister_webhooks(shopify_url: str, password: str) -> None:
     """Unregister all webhooks from Shopify that correspond to current site URL."""
     headers = {
         "Content-Type": "application/json",
@@ -164,6 +168,7 @@ def unregister_s(shopify_url: str, password: str) -> None:
         frappe.log_error(response.text, 'Shopify Unregister Webhooks Error')
         frappe.throw(f"Error fetching webhooks from Shopify: {response.text}")
 
+
 def get_current_domain_name() -> str:
     """Get current site domain name, e.g., test.erpnext.com.
 
@@ -174,6 +179,7 @@ def get_current_domain_name() -> str:
     else:
         return frappe.request.host
 
+
 def get_callback_url() -> str:
     """Shopify calls this URL when new events occur to subscribed webhooks.
 
@@ -181,6 +187,7 @@ def get_callback_url() -> str:
     """
     url = get_current_domain_name()
     return f"https://{url}/api/method/ecommerce_integrations.shopify.connection.store_request_data"
+
 
 @frappe.whitelist(allow_guest=True)
 def store_request_data() -> None:
@@ -190,6 +197,7 @@ def store_request_data() -> None:
         data = json.loads(frappe.request.data)
         event = frappe.request.headers.get("X-Shopify-Topic")
         process_request(data, event)
+
 
 def process_request(data, event):
     # Create log
@@ -203,6 +211,7 @@ def process_request(data, event):
         is_async=True,
         **{"payload": data, "request_id": log.name},
     )
+
 
 def _validate_request(req, hmac_header):
     settings = frappe.get_doc(SETTING_DOCTYPE)
