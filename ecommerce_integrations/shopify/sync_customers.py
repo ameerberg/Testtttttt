@@ -1,93 +1,95 @@
-# sync_customers.py
+from typing import Optional
 
 import frappe
 from frappe import _
-from .connection import get_shopify_customers
+from shopify.resources import Customer
 
-def sync_all_customers():
-    """
-    Fetches all customers from Shopify and syncs them with ERPNext.
-    """
-    try:
-        customers = get_shopify_customers()
-    except Exception as e:
-        frappe.log_error(
-            f"Failed to fetch customers from Shopify: {frappe.get_traceback()}",
-            'Shopify Fetch Customers Error'
-        )
-        frappe.throw(f"Error fetching customers from Shopify: {e}")
+from ecommerce_integrations.shopify.connection import temp_shopify_session, get_shopify_customers
+from ecommerce_integrations.shopify.constants import SETTING_DOCTYPE, MODULE_NAME
+from ecommerce_integrations.shopify.utils import create_shopify_log
 
-    total_customers = len(customers)
-    imported = 0
-    failed = 0
 
-    for customer_data in customers:
-        customer_id = customer_data.get('id', 'Unknown ID')
-        try:
-            create_or_update_customer(customer_data)
-            imported += 1
-        except Exception as e:
-            failed += 1
-            frappe.log_error(
-                f"Error syncing customer {customer_id}: {frappe.get_traceback()}",
-                'Shopify Customer Import Error'
-            )
-            # Continue with the next customer
-            continue
+class ShopifyCustomer:
+    def __init__(self, customer_id: str):
+        self.customer_id = str(customer_id)
+        self.setting = frappe.get_doc(SETTING_DOCTYPE)
 
-    frappe.msgprint(
-        _(f"Customer synchronization completed: {imported} imported, {failed} failed out of {total_customers}."),
-        title=_("Synchronization Summary"),
-        indicator="green" if failed == 0 else "orange"
-    )
+        if not self.setting.is_enabled():
+            frappe.throw(_("Cannot create Shopify customer when integration is disabled."))
 
-def create_or_update_customer(customer_data):
-    """
-    Creates a new customer or updates an existing one based on the Shopify Customer ID.
-    """
-    custom_shopify_customer_id = str(customer_data.get('id'))
-    first_name = customer_data.get('first_name') or ''
-    last_name = customer_data.get('last_name') or ''
-    customer_name = (first_name + ' ' + last_name).strip() or customer_data.get('email')
-    email = customer_data.get('email')
-    phone = customer_data.get('phone')
-    customer_group = 'All Customer Groups'
-    territory = 'All Territories'
+    def is_synced(self) -> bool:
+        return frappe.db.exists("Customer", {"shopify_customer_id": self.customer_id})
 
-    # Check if a customer with the same Shopify Customer ID already exists
-    existing_customer_name = frappe.db.get_value(
-        'Customer',
-        {'custom_shopify_customer_id': custom_shopify_customer_id},
-        'name'
-    )
+    def get_erpnext_customer(self):
+        return frappe.get_doc("Customer", {"shopify_customer_id": self.customer_id})
 
-    if existing_customer_name:
-        # Update existing customer
-        customer = frappe.get_doc('Customer', existing_customer_name)
-    else:
-        # Create new customer
-        customer = frappe.get_doc({
-            'doctype': 'Customer',
-            'customer_name': customer_name,
-            'customer_type': 'Individual',
-            'customer_group': customer_group,
-            'territory': territory,
-            'custom_shopify_customer_id': custom_shopify_customer_id
+    @temp_shopify_session
+    def sync_customer(self):
+        if not self.is_synced():
+            shopify_customer = Customer.find(self.customer_id)
+            customer_dict = shopify_customer.to_dict()
+            self._make_customer(customer_dict)
+
+    def _make_customer(self, customer_dict):
+        customer_name = f"{customer_dict.get('first_name', '')} {customer_dict.get('last_name', '')}".strip()
+        email = customer_dict.get('email')
+        phone = customer_dict.get('phone')
+
+        customer_doc = frappe.get_doc({
+            "doctype": "Customer",
+            "customer_name": customer_name or email or phone,
+            "shopify_customer_id": self.customer_id,
+            "email_id": email,
+            "phone": phone,
+            "customer_group": "All Customer Groups",
+            "territory": "All Territories",
         })
 
-    # Update customer fields
-    customer.customer_name = customer_name
-    customer.email_id = email
-    customer.phone = phone
-    customer.custom_shopify_customer_id = custom_shopify_customer_id
+        customer_doc.flags.ignore_mandatory = True
+        customer_doc.insert(ignore_permissions=True)
 
-    # Save the customer record
-    customer.flags.ignore_mandatory = True
-    customer.save(ignore_permissions=True)
+        create_shopify_log(
+            status="Success",
+            request_data=customer_dict,
+            message=f"Customer {customer_name} imported successfully.",
+            method="sync_customer",
+        )
 
-    # Handle addresses and contact details
-    handle_customer_addresses(customer, customer_data)
-    handle_customer_contacts(customer, customer_data)
+    @staticmethod
+    @temp_shopify_session
+    def sync_all_customers():
+        """Fetches and syncs all customers from Shopify."""
+        try:
+            customers = get_shopify_customers()  # Initial fetch
+            total_customers = len(customers)
+            imported = 0
+            failed = 0
+
+            for customer_data in customers:
+                customer_id = customer_data.get('id', 'Unknown ID')
+                try:
+                    customer_instance = ShopifyCustomer(customer_id)
+                    customer_instance.sync_customer()
+                    imported += 1
+                except Exception as e:
+                    failed += 1
+                    frappe.log_error(
+                        f"Error syncing customer {customer_id}: {frappe.get_traceback()}",
+                        'Shopify Customer Import Error'
+                    )
+                    # Continue with the next customer
+                    continue
+
+            frappe.msgprint(
+                _(f"Customer synchronization completed: {imported} imported, {failed} failed out of {total_customers}."),
+                title=_("Synchronization Summary"),
+                indicator="green" if failed == 0 else "orange"
+            )
+
+        except Exception as e:
+            frappe.log_error(f"Failed to fetch customers from Shopify: {frappe.get_traceback()}", 'Shopify Customer Sync Error')
+            frappe.throw(f"Error syncing customers from Shopify: {e}")
+
 
 def handle_customer_addresses(customer, customer_data):
     """
@@ -96,6 +98,7 @@ def handle_customer_addresses(customer, customer_data):
     addresses = customer_data.get('addresses', [])
     for address_data in addresses:
         create_or_update_address(customer, address_data)
+
 
 def create_or_update_address(customer, address_data):
     """
@@ -159,6 +162,7 @@ def create_or_update_address(customer, address_data):
         )
         frappe.throw(f"Error importing address: {e}")
 
+
 def handle_customer_contacts(customer, customer_data):
     """
     Creates or updates a contact based on the phone number.
@@ -183,7 +187,10 @@ def handle_customer_contacts(customer, customer_data):
             'first_name': customer_data.get('first_name') or customer.customer_name,
             'last_name': customer_data.get('last_name') or '',
             'phone': phone,
-            # Omitting 'links' to skip linkage
+            'links': [{
+                'link_doctype': 'Customer',
+                'link_name': customer.name
+            }]
         }
 
         if customer_data.get('email'):
