@@ -1,3 +1,5 @@
+# connection.py
+
 import base64
 import functools
 import hashlib
@@ -42,20 +44,25 @@ def temp_shopify_session(func):
 
 @temp_shopify_session
 def get_shopify_customers():
-    """Fetch all customers from Shopify, handling pagination."""
+    """Fetch all customers from Shopify using cursor-based pagination."""
     customers = []
     try:
-        customer_count = Customer.count()
-        pages = (customer_count // 250) + 1
-        for page in range(1, pages + 1):
-            customers_page = Customer.find(limit=250, page=page)
-            customers.extend(customers_page)
+        params = {'limit': 250}
+        last_id = None
+        while True:
+            if last_id:
+                params['since_id'] = last_id
+            response = Customer.find(**params)
+            if not response:
+                break
+            customers.extend([c.attributes for c in response])
+            last_id = response[-1].id
+            if len(response) < 250:
+                break
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), 'Shopify Customer Fetch Error')
         frappe.throw(f"Error fetching customers from Shopify: {e}")
-
-    # Convert Shopify resources to dictionaries
-    return [customer.attributes for customer in customers]
+    return customers
 
 
 def register_webhooks(shopify_url: str, password: str) -> list[Webhook]:
