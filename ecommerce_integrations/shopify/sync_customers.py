@@ -113,8 +113,8 @@ def handle_customer_contacts(customer, customer_data):
         # Check if contact already exists using custom fields
         existing_contact_name = frappe.db.get_value('Contact', {
             'email_id': email,
-            'custom_link_doctype': 'Customer',
-            'custom_link_name': customer.name
+            'link_doctype': 'Customer',
+            'link_name': customer.name
         }, 'name')
 
         contact_fields = {
