@@ -58,7 +58,7 @@ class ShopifyCustomer:
 
     @staticmethod
     @temp_shopify_session
-    def ShopifyCustomer.sync_all_customers():
+    def sync_all_customers():
         """Fetches and syncs all customers from Shopify."""
         try:
             customers = get_shopify_customers()  # Initial fetch
