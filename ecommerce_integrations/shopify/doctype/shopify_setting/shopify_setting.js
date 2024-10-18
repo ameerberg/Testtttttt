@@ -33,7 +33,7 @@ frappe.ui.form.on("Shopify Setting", {
                 integration: "Shopify",
             });
         });
-        // Add the new "Import All Customers" button
+        // Updated "Import All Customers" button to use ShopifyCustomer class method
         frm.add_custom_button(__("Import All Customers"), function () {
             frappe.call({
                 method: 'ecommerce_integrations.shopify.sync_customers.ShopifyCustomer.sync_all_customers',
