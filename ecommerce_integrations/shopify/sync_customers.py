@@ -61,10 +61,9 @@ class ShopifyCustomer:
     def sync_all_customers():
         """Fetches and syncs all customers from Shopify."""
         try:
-            customers = get_shopify_customers()  # Initial fetch
+            customers = get_shopify_customers()
             total_customers = len(customers)
-            imported = 0
-            failed = 0
+            imported, failed = 0, 0
 
             for customer_data in customers:
                 customer_id = customer_data.get('id', 'Unknown ID')
@@ -78,7 +77,6 @@ class ShopifyCustomer:
                         f"Error syncing customer {customer_id}: {frappe.get_traceback()}",
                         'Shopify Customer Import Error'
                     )
-                    # Continue with the next customer
                     continue
 
             frappe.msgprint(
@@ -108,37 +106,22 @@ def create_or_update_address(customer, address_data):
     try:
         shopify_address_id = str(address_data.get('id'))
 
-        # Check if the address already exists
         existing_address_name = frappe.db.get_value(
-            'Address',
-            {'shopify_address_id': shopify_address_id},
-            'name'
+            'Address', {'shopify_address_id': shopify_address_id}, 'name'
         )
-
-        address_title = customer.customer_name
-        address_type = 'Billing' if address_data.get('default') else 'Shipping'
-
-        # Safely get address fields, defaulting to empty strings if None
-        address_line1 = address_data.get('address1') or ''
-        address_line2 = address_data.get('address2') or ''
-        city = address_data.get('city') or ''
-        state = address_data.get('province') or ''
-        pincode = address_data.get('zip') or ''
-        country = address_data.get('country') or ''
-        phone = address_data.get('phone') or ''
 
         address_fields = {
             'doctype': 'Address',
             'shopify_address_id': shopify_address_id,
-            'address_title': address_title,
-            'address_type': address_type,
-            'address_line1': address_line1,
-            'address_line2': address_line2,
-            'city': city,
-            'state': state,
-            'pincode': pincode,
-            'country': country,
-            'phone': phone,
+            'address_title': customer.customer_name,
+            'address_type': 'Billing' if address_data.get('default') else 'Shipping',
+            'address_line1': address_data.get('address1') or '',
+            'address_line2': address_data.get('address2') or '',
+            'city': address_data.get('city') or '',
+            'state': address_data.get('province') or '',
+            'pincode': address_data.get('zip') or '',
+            'country': address_data.get('country') or '',
+            'phone': address_data.get('phone') or '',
             'email_id': customer.email_id,
             'links': [{
                 'link_doctype': 'Customer',
@@ -147,11 +130,9 @@ def create_or_update_address(customer, address_data):
         }
 
         if existing_address_name:
-            # Update existing address
             address = frappe.get_doc('Address', existing_address_name)
             address.update(address_fields)
         else:
-            # Create new address
             address = frappe.get_doc(address_fields)
 
         address.flags.ignore_mandatory = True
@@ -178,39 +159,30 @@ def handle_customer_contacts(customer, customer_data):
             )
             return
 
-        # Normalize phone number
         try:
-            parsed_phone = phonenumbers.parse(phone, "US")  # Adjust the default country as needed
+            parsed_phone = phonenumbers.parse(phone, "US")
             phone = phonenumbers.format_number(parsed_phone, phonenumbers.PhoneNumberFormat.E164)
         except phonenumbers.NumberParseException:
             frappe.log_error(f"Invalid phone number format for customer {customer.name}: {phone}", "Shopify Contact Import Warning")
-            return  # Skip contact creation if the phone number is invalid
+            return
 
-        # Find existing contact by phone number only
-        existing_contact_name = frappe.db.get_value('Contact', {
-            'phone': phone,
-        }, 'name')
+        existing_contact_name = frappe.db.get_value('Contact', {'phone': phone}, 'name')
 
         contact_fields = {
             'doctype': 'Contact',
             'first_name': customer_data.get('first_name') or customer.customer_name,
             'last_name': customer_data.get('last_name') or '',
             'phone': phone,
-            'links': [{
-                'link_doctype': 'Customer',
-                'link_name': customer.name
-            }]
+            'links': [{'link_doctype': 'Customer', 'link_name': customer.name}]
         }
 
         if customer_data.get('email'):
             contact_fields['email_id'] = customer_data.get('email')
 
         if existing_contact_name:
-            # Update existing contact without modifying links
             contact = frappe.get_doc('Contact', existing_contact_name)
             contact.update(contact_fields)
         else:
-            # Create new contact without setting links
             contact = frappe.get_doc(contact_fields)
 
         contact.flags.ignore_mandatory = True
