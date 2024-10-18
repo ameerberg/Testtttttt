@@ -39,7 +39,7 @@ def create_or_update_customer(customer_data):
     customer.custom_shopify_customer_id = custom_shopify_customer_id
 
     # Save the customer record
-    customer.flags.ignore_mandatory = True  # Ignore mandatory fields if necessary
+    customer.flags.ignore_mandatory = True
     customer.save(ignore_permissions=True)
 
     # Handle addresses and contact details
@@ -95,8 +95,6 @@ def handle_customer_contacts(customer, customer_data):
     first_name = customer_data.get('first_name')
     last_name = customer_data.get('last_name')
     phone = customer_data.get('phone')
-
-    contact_name = f"{first_name} {last_name}".strip()
 
     # Check if contact already exists
     existing_contact_name = frappe.db.get_value('Contact', {
