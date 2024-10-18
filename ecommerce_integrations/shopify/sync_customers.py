@@ -2,12 +2,15 @@
 
 import frappe
 from frappe import _
-from .connection import get_shopify_customers  # Updated import
+from .connection import get_shopify_customers  # Ensure this is correct
 
 def sync_all_customers():
     customers = get_shopify_customers()
     for customer_data in customers:
         create_or_update_customer(customer_data)
+
+# ... rest of the code ...
+
 
 def create_or_update_customer(customer_data):
     custom_shopify_customer_id = str(customer_data.get('id'))
