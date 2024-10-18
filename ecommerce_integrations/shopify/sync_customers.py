@@ -5,14 +5,23 @@ from frappe import _
 from .connection import get_shopify_customers
 
 def sync_all_customers():
+    """
+    Fetches all customers from Shopify and syncs them with ERPNext.
+    """
     customers = get_shopify_customers()
     for customer_data in customers:
         create_or_update_customer(customer_data)
 
 def create_or_update_customer(customer_data):
+    """
+    Creates a new customer or updates an existing one based on the Shopify Customer ID.
+    """
     custom_shopify_customer_id = str(customer_data.get('id'))
-    customer_name = (customer_data.get('first_name', '') + ' ' + customer_data.get('last_name', '')).strip() or customer_data.get('email')
+    first_name = customer_data.get('first_name') or ''
+    last_name = customer_data.get('last_name') or ''
+    customer_name = (first_name + ' ' + last_name).strip() or customer_data.get('email')
     email = customer_data.get('email')
+    phone = customer_data.get('phone')
     customer_group = 'All Customer Groups'
     territory = 'All Territories'
 
@@ -36,6 +45,7 @@ def create_or_update_customer(customer_data):
     # Update customer fields
     customer.customer_name = customer_name
     customer.email_id = email
+    customer.phone = phone
     customer.custom_shopify_customer_id = custom_shopify_customer_id
 
     # Save the customer record
@@ -47,11 +57,17 @@ def create_or_update_customer(customer_data):
     handle_customer_contacts(customer, customer_data)
 
 def handle_customer_addresses(customer, customer_data):
+    """
+    Creates or updates addresses for the given customer.
+    """
     addresses = customer_data.get('addresses', [])
     for address_data in addresses:
         create_or_update_address(customer, address_data)
 
 def create_or_update_address(customer, address_data):
+    """
+    Creates or updates an address based on the Shopify Address ID.
+    """
     try:
         shopify_address_id = str(address_data.get('id'))
 
@@ -104,37 +120,38 @@ def create_or_update_address(customer, address_data):
         frappe.throw(f"Error importing address: {e}")
 
 def handle_customer_contacts(customer, customer_data):
-    email = customer_data.get('email')
-    first_name = customer_data.get('first_name')
-    last_name = customer_data.get('last_name')
+    """
+    Creates or updates a contact based on the phone number.
+    """
     phone = customer_data.get('phone')
 
     try:
-        # Check if contact already exists using custom fields
+        if not phone:
+            frappe.log_error(f"Customer {customer.name} has no phone number. Skipping contact creation.", "Shopify Contact Import Warning")
+            return
+
+        # Find existing contact by phone number only
         existing_contact_name = frappe.db.get_value('Contact', {
-            'email_id': email,
-            'link_doctype': 'Customer',
-            'link_name': customer.name
+            'phone': phone,
         }, 'name')
 
         contact_fields = {
             'doctype': 'Contact',
-            'first_name': first_name or customer.customer_name,
-            'last_name': last_name,
-            'email_id': email,
+            'first_name': customer_data.get('first_name') or customer.customer_name,
+            'last_name': customer_data.get('last_name'),
             'phone': phone,
-            'links': [{
-                'link_doctype': 'Customer',
-                'link_name': customer.name
-            }]
+            # Omitting 'links' to skip linkage
         }
 
+        if customer_data.get('email'):
+            contact_fields['email_id'] = customer_data.get('email')
+
         if existing_contact_name:
-            # Update existing contact
+            # Update existing contact without modifying links
             contact = frappe.get_doc('Contact', existing_contact_name)
             contact.update(contact_fields)
         else:
-            # Create new contact
+            # Create new contact without setting links
             contact = frappe.get_doc(contact_fields)
 
         contact.flags.ignore_mandatory = True
