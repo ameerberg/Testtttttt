@@ -52,6 +52,9 @@ def get_shopify_customers():
         while True:
             if last_id:
                 params['since_id'] = last_id
+            # Debug: Log the current parameters
+            frappe.logger().debug(f"Fetching customers with params: {params}")
+            
             response = Customer.find(**params)
             if not response:
                 break
@@ -63,6 +66,7 @@ def get_shopify_customers():
         frappe.log_error(frappe.get_traceback(), 'Shopify Customer Fetch Error')
         frappe.throw(f"Error fetching customers from Shopify: {e}")
     return customers
+
 
 
 def register_webhooks(shopify_url: str, password: str) -> list[Webhook]:
