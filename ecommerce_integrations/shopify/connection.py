@@ -1,5 +1,4 @@
-# connection.py
-
+# Updated get_shopify_customers function to handle pagination
 import functools
 import hmac
 import hashlib
@@ -60,110 +59,96 @@ def temp_shopify_session(func):
 
 @temp_shopify_session
 def get_shopify_customers():
-    """Fetch all customers from Shopify using cursor-based pagination with requests."""
+    """
+    Fetch all customers from Shopify using cursor-based pagination with requests.
+    """
     customers = []
-    try:
-        settings = frappe.get_doc(SETTING_DOCTYPE)
-        shopify_url = settings.shopify_url
-        password = settings.get_password("password")
-        headers = {
-            "Content-Type": "application/json",
-            "X-Shopify-Access-Token": password
-        }
-        params = {'limit': 250}
-        last_id = None
-        while True:
-            if last_id:
-                params['since_id'] = last_id
-            frappe.logger().debug(f"Fetching customers with params: {params}")
-            response = requests.get(
-                f"https://{shopify_url}/admin/api/{API_VERSION}/customers.json",
-                headers=headers,
-                params=params
+    settings = frappe.get_doc(SETTING_DOCTYPE)
+    shopify_url = settings.shopify_url
+    password = settings.get_password("password")
+    endpoint = f"https://{shopify_url}/admin/api/{API_VERSION}/customers.json"
+
+    params = {
+        "limit": 250
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "X-Shopify-Access-Token": password
+    }
+
+    while True:
+        response = requests.get(endpoint, headers=headers, params=params)
+        if response.status_code != 200:
+            frappe.log_error(
+                f"Error fetching customers from Shopify: {response.text}",
+                "Shopify Customer Fetch Error"
             )
-            frappe.logger().debug(f"Shopify Response Status: {response.status_code}")
-            if response.status_code != 200:
-                frappe.log_error(response.text, 'Shopify Customer Fetch Error')
-                frappe.throw(f"Error fetching customers from Shopify: {response.text}")
-            data = response.json()
-            customers_page = data.get('customers', [])
-            if not customers_page:
+            frappe.throw(f"Error fetching customers from Shopify: {response.status_code}")
+
+        data = response.json().get("customers", [])
+        customers.extend(data)
+
+        # Check for pagination link in headers (Link header for cursor-based pagination)
+        if "Link" in response.headers:
+            links = response.headers["Link"].split(",")
+            next_link = None
+            for link in links:
+                if 'rel="next"' in link:
+                    next_link = link.split(";")[0].strip(" <>")
+                    break
+            if next_link:
+                endpoint = next_link
+            else:
                 break
-            customers.extend(customers_page)
-            last_id = customers_page[-1].get('id')
-            if len(customers_page) < 250:
-                break
-            time.sleep(1)  # Sleep for 1 second between requests to respect rate limits
-    except Exception as e:
-        frappe.log_error(frappe.get_traceback(), 'Shopify Customer Fetch Error')
-        frappe.throw(f"Error fetching customers from Shopify: {e}")
+        else:
+            break
+
     return customers
 
 
-def register_webhooks(shopify_url: str, password: str) -> list:
-    """Register required webhooks with Shopify and return registered webhooks."""
-    new_webhooks = []
-
-    # Clear all stale webhooks matching current site URL before registering new ones
-    unregister_webhooks(shopify_url, password)
+def get_shopify_webhooks():
+    """Fetch webhooks from Shopify and return response."""
+    settings = frappe.get_doc(SETTING_DOCTYPE)
+    shopify_url = settings.shopify_url
+    password = settings.get_password("password")
+    endpoint = f"https://{shopify_url}/admin/api/{API_VERSION}/webhooks.json"
 
     headers = {
         "Content-Type": "application/json",
         "X-Shopify-Access-Token": password
     }
 
-    for topic in WEBHOOK_EVENTS:
-        payload = {
-            "webhook": {
-                "topic": topic,
-                "address": get_callback_url(),
-                "format": "json"
-            }
-        }
-        response = requests.post(
-            f"https://{shopify_url}/admin/api/{API_VERSION}/webhooks.json",
-            headers=headers,
-            data=json.dumps(payload)
-        )
-        if response.status_code == 201:
-            webhook = response.json().get('webhook')
-            new_webhooks.append(webhook)
-        else:
-            create_shopify_log(
-                status="Error",
-                response_data=response.text,
-                exception=response.json().get('errors')
-            )
-
-    return new_webhooks
-
-
-def unregister_webhooks(shopify_url: str, password: str) -> None:
-    """Unregister all webhooks from Shopify that correspond to current site URL."""
-    headers = {
-        "Content-Type": "application/json",
-        "X-Shopify-Access-Token": password
-    }
-    response = requests.get(
-        f"https://{shopify_url}/admin/api/{API_VERSION}/webhooks.json",
-        headers=headers
-    )
+    response = requests.get(endpoint, headers=headers)
     if response.status_code == 200:
-        webhooks = response.json().get('webhooks', [])
+        return response.json()
+    else:
+        frappe.log_error(response.text, 'Shopify Fetch Webhooks Error')
+        frappe.throw(f"Error fetching webhooks from Shopify: {response.text}")
+
+
+def unregister_shopify_webhooks():
+    """Unregister all webhooks from Shopify."""
+    settings = frappe.get_doc(SETTING_DOCTYPE)
+    shopify_url = settings.shopify_url
+    password = settings.get_password("password")
+    endpoint = f"https://{shopify_url}/admin/api/{API_VERSION}/webhooks.json"
+
+    headers = {
+        "Content-Type": "application/json",
+        "X-Shopify-Access-Token": password
+    }
+
+    response = requests.get(endpoint, headers=headers)
+    if response.status_code == 200:
+        webhooks = response.json().get("webhooks", [])
         for webhook in webhooks:
-            address = webhook.get('address')
-            if get_current_domain_name() in address:
-                webhook_id = webhook.get('id')
-                delete_response = requests.delete(
-                    f"https://{shopify_url}/admin/api/{API_VERSION}/webhooks/{webhook_id}.json",
-                    headers=headers
+            delete_endpoint = f"{endpoint}/{webhook['id']}.json"
+            delete_response = requests.delete(delete_endpoint, headers=headers)
+            if delete_response.status_code != 200:
+                frappe.log_error(
+                    delete_response.text, 'Shopify Unregister Webhooks Error'
                 )
-                if delete_response.status_code != 200:
-                    create_shopify_log(
-                        status="Error",
-                        response_data=delete_response.text,
-                        exception=delete_response.json().get('errors')
-                    )
+                frappe.throw(f"Error unregistering webhook {webhook['id']}: {delete_response.text}")
     else:
         frappe.log_error(response.text, 'Shopify Unregister Webhooks Error')
         frappe.throw(f"Error fetching webhooks from Shopify: {response.text}")
