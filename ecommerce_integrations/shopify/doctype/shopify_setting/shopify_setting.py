@@ -32,6 +32,7 @@ from ecommerce_integrations.shopify.utils import (
     ensure_old_connector_is_disabled,
     migrate_from_old_connector,
 )
+from ecommerce_integrations.shopify.sync_customers import sync_all_customers
 
 
 class ShopifySetting(SettingController):
@@ -270,4 +271,5 @@ def import_all_customers():
     except Exception as e:
         frappe.log_error(message=str(e), title="Shopify Customer Import Error")
         frappe.throw(_("An error occurred while importing customers: {0}").format(str(e)))
+
 
