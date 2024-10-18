@@ -84,8 +84,8 @@ def create_or_update_address(customer, address_data):
             'phone': phone,
             'email_id': customer.email_id,
             'links': [{
-                'custom_link_doctype': 'Customer',
-                'custom_link_name': customer.name
+                'link_doctype': 'Customer',
+                'link_name': customer.name
             }]
         }
 
@@ -110,7 +110,7 @@ def handle_customer_contacts(customer, customer_data):
     phone = customer_data.get('phone')
 
     try:
-        # Check if contact already exists
+        # Check if contact already exists using custom fields
         existing_contact_name = frappe.db.get_value('Contact', {
             'email_id': email,
             'custom_link_doctype': 'Customer',
@@ -124,8 +124,8 @@ def handle_customer_contacts(customer, customer_data):
             'email_id': email,
             'phone': phone,
             'links': [{
-                'custom_link_doctype': 'Customer',
-                'custom_link_name': customer.name
+                'link_doctype': 'Customer',
+                'link_name': customer.name
             }]
         }
 
