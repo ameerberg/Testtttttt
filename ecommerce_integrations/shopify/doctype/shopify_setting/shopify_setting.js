@@ -36,7 +36,7 @@ frappe.ui.form.on("Shopify Setting", {
         // Add the new "Import All Customers" button
         frm.add_custom_button(__("Import All Customers"), function () {
             frappe.call({
-                method: 'ecommerce_integrations.shopify.doctype.shopify_setting.shopify_setting.import_all_customers',
+                method: 'ecommerce_integrations.shopify.sync_customers.ShopifyCustomer.sync_all_customers',
                 callback: function(r) {
                     if (!r.exc) {
                         frappe.msgprint(__('All customers have been imported successfully.'));
