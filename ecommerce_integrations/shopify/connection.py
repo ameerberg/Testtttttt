@@ -6,6 +6,7 @@ import base64
 import json
 import requests
 import time
+import phonenumbers
 
 import frappe
 from frappe import _
@@ -207,3 +208,67 @@ def _validate_request(req, hmac_header):
     if sig != bytes(hmac_header.encode()):
         create_shopify_log(status="Error", request_data=req.data)
         frappe.throw(_("Unverified Webhook Data"))
+
+
+def handle_customer_contacts(customer, customer_data):
+    """
+    Creates or updates a contact based on the phone number and links it to the customer.
+    """
+    phone = customer_data.get('phone')
+
+    try:
+        # Normalize the phone number if provided
+        if phone:
+            try:
+                parsed_phone = phonenumbers.parse(phone, "US")  # Adjust default country as needed
+                phone = phonenumbers.format_number(parsed_phone, phonenumbers.PhoneNumberFormat.E164)
+            except phonenumbers.NumberParseException:
+                frappe.log_error(f"Invalid phone number format for customer {customer.name}: {phone}", "Shopify Contact Import Warning")
+                return  # Skip contact creation if the phone number is invalid
+
+        # Check if a contact with the same phone already exists
+        existing_contact_name = None
+        if phone:
+            existing_contact_name = frappe.db.get_value('Contact', {
+                'phone': phone,
+            }, 'name')
+
+        contact_fields = {
+            'doctype': 'Contact',
+            'first_name': customer_data.get('first_name') or customer.customer_name,
+            'last_name': customer_data.get('last_name') or '',
+            'phone': phone
+        }
+
+        if existing_contact_name:
+            # Update existing contact without modifying links
+            contact = frappe.get_doc('Contact', existing_contact_name)
+            contact.update(contact_fields)
+        else:
+            # Create new contact without setting links
+            contact = frappe.get_doc(contact_fields)
+
+        contact.flags.ignore_mandatory = True
+        contact.save(ignore_permissions=True)
+
+        # Link contact to customer
+        link_exists = frappe.db.exists('Dynamic Link', {
+            'link_doctype': 'Customer',
+            'link_name': customer.name,
+            'parenttype': 'Contact',
+            'parent': contact.name
+        })
+
+        if not link_exists:
+            contact.append('links', {
+                'link_doctype': 'Customer',
+                'link_name': customer.name
+            })
+            contact.save(ignore_permissions=True)
+
+    except Exception as e:
+        frappe.log_error(
+            f"Error importing contact for customer {customer.name}: {frappe.get_traceback()}",
+            'Shopify Contact Import Error'
+        )
+        frappe.throw(f"Error importing contact: {e}")
