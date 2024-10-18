@@ -1,5 +1,11 @@
 # connection.py
-
+import requests
+from ecommerce_integrations.shopify.constants import (
+    API_VERSION,
+    SETTING_DOCTYPE,
+)
+from ecommerce_integrations.shopify.utils import create_shopify_log
+--
 import base64
 import functools
 import hashlib
@@ -47,23 +53,36 @@ def temp_shopify_session(func):
 
 @temp_shopify_session
 def get_shopify_customers():
-    """Fetch all customers from Shopify using cursor-based pagination."""
+    """Fetch all customers from Shopify using cursor-based pagination with requests."""
     customers = []
     try:
+        settings = frappe.get_doc(SETTING_DOCTYPE)
+        shopify_url = settings.shopify_url
+        password = settings.get_password("password")
+        headers = {
+            "Content-Type": "application/json",
+            "X-Shopify-Access-Token": password
+        }
         params = {'limit': 250}
         last_id = None
         while True:
             if last_id:
                 params['since_id'] = last_id
-            # Debug: Log the current parameters
-            frappe.logger().debug(f"Fetching customers with params: {params}")
-            
-            response = Customer.find(**params)
-            if not response:
+            response = requests.get(
+                f"https://{shopify_url}/admin/api/{API_VERSION}/customers.json",
+                headers=headers,
+                params=params
+            )
+            if response.status_code != 200:
+                frappe.log_error(response.text, 'Shopify Customer Fetch Error')
+                frappe.throw(f"Error fetching customers from Shopify: {response.text}")
+            data = response.json()
+            customers_page = data.get('customers', [])
+            if not customers_page:
                 break
-            customers.extend([c.attributes for c in response])
-            last_id = response[-1].id
-            if len(response) < 250:
+            customers.extend(customers_page)
+            last_id = customers_page[-1].get('id')
+            if len(customers_page) < 250:
                 break
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), 'Shopify Customer Fetch Error')
