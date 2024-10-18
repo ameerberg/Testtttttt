@@ -6,11 +6,7 @@ from frappe import _
 from urllib.parse import urlparse, parse_qs
 import time
 
-# Constants - Replace these with your actual Shopify credentials and store name
-SHOPIFY_API_KEY = 'your_shopify_api_key'
-SHOPIFY_PASSWORD = 'your_shopify_password'
-SHOPIFY_STORE_NAME = 'your_store_name'  # e.g., 'mystore' for 'mystore.myshopify.com'
-SHOPIFY_API_VERSION = '2023-10'  # Update as needed
+# Constants
 CUSTOMER_LIMIT_PER_REQUEST = 250  # Shopify's maximum limit per request
 BATCH_SIZE = 1000  # Number of customers to process per batch
 RATE_LIMIT_THRESHOLD = 5  # Threshold to pause API calls when approaching rate limit
@@ -20,6 +16,23 @@ def sync_all_customers():
     Fetches all customers from Shopify and syncs them with ERPNext.
     Handles pagination, rate limits, and processes customers in batches.
     """
+    # Retrieve Shopify settings from ERPNext
+    shopify_settings = frappe.get_single('Shopify Settings')  # Adjust DocType name if different
+
+    # Validate Shopify settings
+    if not shopify_settings.store_name or not shopify_settings.access_token:
+        frappe.log_error(
+            "Shopify Store Name or Access Token is not configured in Shopify Settings.",
+            "Shopify Configuration Error"
+        )
+        return
+
+    store_name = shopify_settings.store_name.strip()
+    access_token = shopify_settings.access_token.strip()
+
+    if not store_name.endswith('.myshopify.com'):
+        store_name = f"{store_name}.myshopify.com"  # Ensure full domain
+
     customers = []
     has_next_page = True
     page_info = None  # Cursor for pagination
@@ -29,7 +42,7 @@ def sync_all_customers():
     frappe.logger().info("Starting Shopify Customer Sync.")
 
     while has_next_page:
-        response = get_shopify_customers(page_info=page_info)
+        response = get_shopify_customers(store_name, access_token, page_info=page_info)
         if response.status_code == 200:
             fetched_customers = response.json().get('customers', [])
             customers.extend(fetched_customers)
@@ -53,14 +66,19 @@ def sync_all_customers():
             # Handle rate limiting
             api_call_limit = response.headers.get('X-Shopify-Shop-Api-Call-Limit')
             if api_call_limit:
-                current, max_limit = map(int, api_call_limit.split('/'))
-                remaining = max_limit - current
-                frappe.logger().info(f"Shopify API Call Limit: {current}/{max_limit}. Remaining: {remaining}")
-                if remaining < RATE_LIMIT_THRESHOLD:
-                    frappe.logger().info("Approaching Shopify API rate limit. Sleeping for 1 second.")
-                    time.sleep(1)  # Sleep to avoid hitting rate limits
+                try:
+                    current, max_limit = map(int, api_call_limit.split('/'))
+                    remaining = max_limit - current
+                    frappe.logger().info(f"Shopify API Call Limit: {current}/{max_limit}. Remaining: {remaining}")
+                    if remaining < RATE_LIMIT_THRESHOLD:
+                        frappe.logger().info("Approaching Shopify API rate limit. Sleeping for 1 second.")
+                        time.sleep(1)  # Sleep to avoid hitting rate limits
+                except Exception as e:
+                    frappe.log_error(frappe.get_traceback(), "Shopify API Call Limit Parsing Error")
         else:
-            frappe.log_error(f"Shopify API Error: {response.status_code} - {response.text}", "Shopify Customer Fetch Error")
+            # Truncate error message to 140 characters for the 'Title' field
+            error_title = f"Shopify API Error: {response.status_code} - {response.text}"[:140]
+            frappe.log_error(error_title, "Shopify Customer Fetch Error")
             has_next_page = False  # Stop the loop on error
 
     frappe.logger().info(f"Total customers fetched: {len(customers)}. Starting processing.")
@@ -72,9 +90,11 @@ def sync_all_customers():
         frappe.logger().info(f"Processing batch: {processed + 1} to {processed + len(batch)}")
         for customer_data in batch:
             try:
-                create_or_update_customer(customer_data)
+                create_or_update_customer(customer_data, store_name, access_token)
             except Exception as e:
-                frappe.log_error(frappe.get_traceback(), f'Shopify Customer Import Error for Customer ID {customer_data.get("id")}')
+                # Truncate error message to 140 characters for the 'Title' field
+                error_title = f"Shopify Customer Import Error for ID {customer_data.get('id')}: {str(e)}"[:140]
+                frappe.log_error(error_title, "Shopify Customer Import Error")
                 continue  # Continue with the next customer
         processed += BATCH_SIZE
         frappe.db.commit()  # Commit after each batch to ensure data persistence
@@ -82,11 +102,15 @@ def sync_all_customers():
 
     frappe.logger().info("Completed syncing all Shopify customers.")
 
-def get_shopify_customers(page_info=None):
+def get_shopify_customers(store_domain, access_token, page_info=None):
     """
-    Fetches customers from Shopify with optional pagination.
+    Fetches customers from Shopify with optional pagination using access token.
     """
-    url = f"https://{SHOPIFY_API_KEY}:{SHOPIFY_PASSWORD}@{SHOPIFY_STORE_NAME}.myshopify.com/admin/api/{SHOPIFY_API_VERSION}/customers.json"
+    url = f"https://{store_domain}/admin/api/2023-10/customers.json"
+    headers = {
+        "X-Shopify-Access-Token": access_token,
+        "Content-Type": "application/json"
+    }
     params = {
         'limit': CUSTOMER_LIMIT_PER_REQUEST
     }
@@ -94,13 +118,15 @@ def get_shopify_customers(page_info=None):
         params['page_info'] = page_info
 
     try:
-        response = requests.get(url, params=params)
+        response = requests.get(url, headers=headers, params=params, timeout=30)  # Added timeout for network issues
         return response
     except requests.exceptions.RequestException as e:
-        frappe.log_error(frappe.get_traceback(), f"Shopify API Request Exception: {e}")
+        # Truncate error message to 140 characters for the 'Title' field
+        error_title = f"Shopify API Request Exception: {str(e)}"[:140]
+        frappe.log_error(error_title, "Shopify API Request Exception")
         return frappe._dict({'status_code': 500, 'text': str(e), 'headers': {}})
 
-def create_or_update_customer(customer_data):
+def create_or_update_customer(customer_data, store_domain, access_token):
     """
     Creates a new customer or updates an existing one based on the Shopify Customer ID.
     Identifies contacts by phone number.
@@ -142,18 +168,18 @@ def create_or_update_customer(customer_data):
     customer.save(ignore_permissions=True)
 
     # Handle addresses and contact details
-    handle_customer_addresses(customer, customer_data)
+    handle_customer_addresses(customer, customer_data, store_domain, access_token)
     handle_customer_contacts(customer, customer_data)
 
-def handle_customer_addresses(customer, customer_data):
+def handle_customer_addresses(customer, customer_data, store_domain, access_token):
     """
     Creates or updates addresses for the given customer.
     """
     addresses = customer_data.get('addresses', [])
     for address_data in addresses:
-        create_or_update_address(customer, address_data)
+        create_or_update_address(customer, address_data, store_domain, access_token)
 
-def create_or_update_address(customer, address_data):
+def create_or_update_address(customer, address_data, store_domain, access_token):
     """
     Creates or updates an address based on the Shopify Address ID.
     """
@@ -205,7 +231,9 @@ def create_or_update_address(customer, address_data):
         address.flags.ignore_mandatory = True
         address.save(ignore_permissions=True)
     except Exception as e:
-        frappe.log_error(frappe.get_traceback(), 'Shopify Address Import Error')
+        # Truncate error message to 140 characters for the 'Title' field
+        error_title = f"Shopify Address Import Error: {str(e)}"[:140]
+        frappe.log_error(error_title, "Shopify Address Import Error")
         frappe.throw(f"Error importing address: {e}")
 
 def handle_customer_contacts(customer, customer_data):
@@ -216,7 +244,9 @@ def handle_customer_contacts(customer, customer_data):
 
     try:
         if not phone:
-            frappe.log_error(f"Customer {customer.name} has no phone number. Skipping contact creation.", "Shopify Contact Import Warning")
+            # Truncate warning message to 140 characters
+            warning_message = f"Customer {customer.name} has no phone number. Skipping contact creation."[:140]
+            frappe.log_error(warning_message, "Shopify Contact Import Warning")
             return
 
         # Find existing contact by phone number only
@@ -246,5 +276,7 @@ def handle_customer_contacts(customer, customer_data):
         contact.flags.ignore_mandatory = True
         contact.save(ignore_permissions=True)
     except Exception as e:
-        frappe.log_error(frappe.get_traceback(), 'Shopify Contact Import Error')
+        # Truncate error message to 140 characters for the 'Title' field
+        error_title = f"Shopify Contact Import Error for Phone {phone}: {str(e)}"[:140]
+        frappe.log_error(error_title, "Shopify Contact Import Error")
         frappe.throw(f"Error importing contact: {e}")
