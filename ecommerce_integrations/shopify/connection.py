@@ -1,29 +1,94 @@
+import requests
+import json
+import frappe
 import re
 
-# Updating the function get_shopify_customers() in connection.py to implement pagination
+# Other necessary imports
+from frappe import _
+from .connection import get_shopify_customers
 
-# Extract the function definition from connection.py
-if connection_content:
-    # Using a regular expression to find the 'get_shopify_customers' function in the connection.py content
-    match = re.search(r'def get_shopify_customers\([\s\S]*?\):([\s\S]*?)(?=\ndef |\Z)', connection_content)
-    if match:
-        original_function = match.group(0)
+def sync_all_customers():
+    """
+    Fetches all customers from Shopify and syncs them with ERPNext.
+    """
+    try:
+        customers = get_shopify_customers()
+    except Exception as e:
+        frappe.log_error(
+            f"Failed to fetch customers from Shopify: {frappe.get_traceback()}",
+            'Shopify Fetch Customers Error'
+        )
+        frappe.throw(f"Error fetching customers from Shopify: {e}")
+
+    total_customers = len(customers)
+    imported = 0
+    failed = 0
+
+    for customer_data in customers:
+        customer_id = customer_data.get('id', 'Unknown ID')
+        try:
+            create_or_update_customer(customer_data)
+            imported += 1
+        except Exception as e:
+            failed += 1
+            frappe.log_error(
+                f"Error syncing customer {customer_id}: {frappe.get_traceback()}",
+                'Shopify Customer Import Error'
+            )
+            # Continue with the next customer
+            continue
+
+    frappe.msgprint(
+        _(f"Customer synchronization completed: {imported} imported, {failed} failed out of {total_customers}."),
+        title=_("Synchronization Summary"),
+        indicator="green" if failed == 0 else "orange"
+    )
+
+def create_or_update_customer(customer_data):
+    """
+    Creates a new customer or updates an existing one based on the Shopify Customer ID.
+    """
+    custom_shopify_customer_id = str(customer_data.get('id'))
+    first_name = customer_data.get('first_name') or ''
+    last_name = customer_data.get('last_name') or ''
+    customer_name = (first_name + ' ' + last_name).strip() or customer_data.get('email')
+    email = customer_data.get('email')
+    phone = customer_data.get('phone')
+    customer_group = 'All Customer Groups'
+    territory = 'All Territories'
+
+    # Check if a customer with the same Shopify Customer ID already exists
+    existing_customer = frappe.db.get_value('Customer', {'shopify_customer_id': custom_shopify_customer_id}, 'name')
+
+    if existing_customer:
+        # Update existing customer
+        customer = frappe.get_doc('Customer', existing_customer)
+        customer.customer_name = customer_name
+        customer.email_id = email
+        customer.phone = phone
+        customer.customer_group = customer_group
+        customer.territory = territory
+        customer.save()
     else:
-        original_function = None
+        # Create new customer
+        customer = frappe.get_doc({
+            'doctype': 'Customer',
+            'customer_name': customer_name,
+            'shopify_customer_id': custom_shopify_customer_id,
+            'email_id': email,
+            'phone': phone,
+            'customer_group': customer_group,
+            'territory': territory,
+        })
+        customer.insert()
 
-# Prepare the new implementation of get_shopify_customers with pagination
-if original_function:
-    # Adding pagination handling to the function
-    updated_function = """
+    frappe.db.commit()
+
 def get_shopify_customers():
-    \"\"\"
+    """
     Fetches all customers from Shopify and returns them.
     Implements pagination to fetch all records.
-    \"\"\"
-    import requests
-    import json
-    import frappe
-
+    """
     settings = frappe.get_doc("Shopify Settings")
     base_url = f"https://{settings.shopify_store_name}.myshopify.com/admin/api/{settings.api_version}/customers.json"
     headers = {
@@ -56,19 +121,3 @@ def get_shopify_customers():
         frappe.throw(f"Error fetching customers from Shopify: {response.text}")
 
     return customers
-"""
-
-    # Replacing the original function with the updated one in the file content
-    updated_connection_content = connection_content.replace(original_function, updated_function)
-
-    # Saving the updated content back to the connection.py file
-    connection_file_path = os.path.join(extraction_path, 'Testtttttt-develop/ecommerce_integrations/shopify/connection.py')
-    with open(connection_file_path, 'w') as file:
-        file.write(updated_connection_content)
-
-    # Indicate that the update was successful
-    updated_status = "Pagination successfully implemented in get_shopify_customers function."
-else:
-    updated_status = "Failed to locate get_shopify_customers function for updating."
-
-updated_status
