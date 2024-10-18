@@ -1,7 +1,5 @@
 # sync_customers.py
 
-# sync_customers.py
-
 import frappe
 from frappe import _
 from .connection import get_shopify_customers
@@ -10,12 +8,6 @@ def sync_all_customers():
     customers = get_shopify_customers()
     for customer_data in customers:
         create_or_update_customer(customer_data)
-
-# ... rest of the code remains the same ...
-
-
-# ... rest of the code ...
-
 
 def create_or_update_customer(customer_data):
     custom_shopify_customer_id = str(customer_data.get('id'))
@@ -60,43 +52,56 @@ def handle_customer_addresses(customer, customer_data):
         create_or_update_address(customer, address_data)
 
 def create_or_update_address(customer, address_data):
-    shopify_address_id = str(address_data.get('id'))
+    try:
+        shopify_address_id = str(address_data.get('id'))
 
-    # Check if the address already exists
-    existing_address_name = frappe.db.get_value('Address', {'shopify_address_id': shopify_address_id}, 'name')
+        # Check if the address already exists
+        existing_address_name = frappe.db.get_value('Address', {'shopify_address_id': shopify_address_id}, 'name')
 
-    address_title = customer.customer_name
-    address_type = 'Billing' if address_data.get('default') else 'Shipping'
+        address_title = customer.customer_name
+        address_type = 'Billing' if address_data.get('default') else 'Shipping'
 
-    address_fields = {
-        'doctype': 'Address',
-        'shopify_address_id': shopify_address_id,
-        'address_title': address_title,
-        'address_type': address_type,
-        'address_line1': address_data.get('address1'),
-        'address_line2': address_data.get('address2'),
-        'city': address_data.get('city'),
-        'state': address_data.get('province'),
-        'pincode': address_data.get('zip'),
-        'country': address_data.get('country'),
-        'phone': address_data.get('phone'),
-        'email_id': customer.email_id,
-        'links': [{
-            'custom_link_doctype': 'Customer',
-            'custom_link_name': customer.name
-        }]
-    }
+        # Safely get address fields, defaulting to empty strings if None
+        address_line1 = address_data.get('address1') or ''
+        address_line2 = address_data.get('address2') or ''
+        city = address_data.get('city') or ''
+        state = address_data.get('province') or ''
+        pincode = address_data.get('zip') or ''
+        country = address_data.get('country') or ''
+        phone = address_data.get('phone') or ''
 
-    if existing_address_name:
-        # Update existing address
-        address = frappe.get_doc('Address', existing_address_name)
-        address.update(address_fields)
-    else:
-        # Create new address
-        address = frappe.get_doc(address_fields)
+        address_fields = {
+            'doctype': 'Address',
+            'shopify_address_id': shopify_address_id,
+            'address_title': address_title,
+            'address_type': address_type,
+            'address_line1': address_line1,
+            'address_line2': address_line2,
+            'city': city,
+            'state': state,
+            'pincode': pincode,
+            'country': country,
+            'phone': phone,
+            'email_id': customer.email_id,
+            'links': [{
+                'custom_link_doctype': 'Customer',
+                'custom_link_name': customer.name
+            }]
+        }
 
-    address.flags.ignore_mandatory = True
-    address.save(ignore_permissions=True)
+        if existing_address_name:
+            # Update existing address
+            address = frappe.get_doc('Address', existing_address_name)
+            address.update(address_fields)
+        else:
+            # Create new address
+            address = frappe.get_doc(address_fields)
+
+        address.flags.ignore_mandatory = True
+        address.save(ignore_permissions=True)
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), 'Shopify Address Import Error')
+        frappe.throw(f"Error importing address: {e}")
 
 def handle_customer_contacts(customer, customer_data):
     email = customer_data.get('email')
@@ -104,31 +109,36 @@ def handle_customer_contacts(customer, customer_data):
     last_name = customer_data.get('last_name')
     phone = customer_data.get('phone')
 
-    # Check if contact already exists
-    existing_contact_name = frappe.db.get_value('Contact', {
-        'email_id': email,
-        'custom_link_name': customer.name
-    }, 'name')
-
-    contact_fields = {
-        'doctype': 'Contact',
-        'first_name': first_name or customer.customer_name,
-        'last_name': last_name,
-        'email_id': email,
-        'phone': phone,
-        'links': [{
+    try:
+        # Check if contact already exists
+        existing_contact_name = frappe.db.get_value('Contact', {
+            'email_id': email,
             'custom_link_doctype': 'Customer',
             'custom_link_name': customer.name
-        }]
-    }
+        }, 'name')
 
-    if existing_contact_name:
-        # Update existing contact
-        contact = frappe.get_doc('Contact', existing_contact_name)
-        contact.update(contact_fields)
-    else:
-        # Create new contact
-        contact = frappe.get_doc(contact_fields)
+        contact_fields = {
+            'doctype': 'Contact',
+            'first_name': first_name or customer.customer_name,
+            'last_name': last_name,
+            'email_id': email,
+            'phone': phone,
+            'links': [{
+                'custom_link_doctype': 'Customer',
+                'custom_link_name': customer.name
+            }]
+        }
 
-    contact.flags.ignore_mandatory = True
-    contact.save(ignore_permissions=True)
+        if existing_contact_name:
+            # Update existing contact
+            contact = frappe.get_doc('Contact', existing_contact_name)
+            contact.update(contact_fields)
+        else:
+            # Create new contact
+            contact = frappe.get_doc(contact_fields)
+
+        contact.flags.ignore_mandatory = True
+        contact.save(ignore_permissions=True)
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), 'Shopify Contact Import Error')
+        frappe.throw(f"Error importing contact: {e}")
