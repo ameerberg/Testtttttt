@@ -1,13 +1,18 @@
 # sync_customers.py
 
+# sync_customers.py
+
 import frappe
 from frappe import _
-from .connection import get_shopify_customers  # Ensure this is correct
+from .connection import get_shopify_customers
 
 def sync_all_customers():
     customers = get_shopify_customers()
     for customer_data in customers:
         create_or_update_customer(customer_data)
+
+# ... rest of the code remains the same ...
+
 
 # ... rest of the code ...
 
