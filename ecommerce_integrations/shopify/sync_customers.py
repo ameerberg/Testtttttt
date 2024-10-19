@@ -56,38 +56,50 @@ class ShopifyCustomer:
             method="sync_customer",
         )
 
-    @staticmethod
-    @temp_shopify_session
-    def sync_all_customers():
-        """Fetches and syncs all customers from Shopify."""
-        try:
-            customers = get_shopify_customers()
-            total_customers = len(customers)
-            imported, failed = 0, 0
 
-            for customer_data in customers:
-                customer_id = customer_data.get('id', 'Unknown ID')
-                try:
-                    customer_instance = ShopifyCustomer(customer_id)
-                    customer_instance.sync_customer()
-                    imported += 1
-                except Exception as e:
-                    failed += 1
-                    frappe.log_error(
-                        f"Error syncing customer {customer_id}: {frappe.get_traceback()}",
-                        'Shopify Customer Import Error'
-                    )
-                    continue
+@frappe.whitelist()
+def import_all_customers():
+    try:
+        # Corrected to properly reference the class method ShopifyCustomer.sync_all_customers
+        enqueue(ShopifyCustomer.sync_all_customers, queue='long', timeout=6000)
+        frappe.msgprint(_("Customer import has been initiated in the background."))
+    except Exception as e:
+        frappe.log_error(message=str(e), title="Shopify Customer Import Error")
+        frappe.throw(_("An error occurred while importing customers: {0}").format(str(e)))
 
-            frappe.msgprint(
-                _(f"Customer synchronization completed: {imported} imported, {failed} failed out of {total_customers}."),
-                title=_("Synchronization Summary"),
-                indicator="green" if failed == 0 else "orange"
-            )
 
-        except Exception as e:
-            frappe.log_error(f"Failed to fetch customers from Shopify: {frappe.get_traceback()}", 'Shopify Customer Sync Error')
-            frappe.throw(f"Error syncing customers from Shopify: {e}")
+@temp_shopify_session
+def sync_all_customers():
+    """Fetches and syncs all customers from Shopify."""
+    try:
+        customers = get_shopify_customers()  # Initial fetch
+        total_customers = len(customers)
+        imported = 0
+        failed = 0
+
+        for customer_data in customers:
+            customer_id = customer_data.get('id', 'Unknown ID')
+            try:
+                customer_instance = ShopifyCustomer(customer_id)
+                customer_instance.sync_customer()
+                imported += 1
+            except Exception as e:
+                failed += 1
+                frappe.log_error(
+                    f"Error syncing customer {customer_id}: {frappe.get_traceback()}",
+                    'Shopify Customer Import Error'
+                )
+                continue
+
+        frappe.msgprint(
+            _(f"Customer synchronization completed: {imported} imported, {failed} failed out of {total_customers}."),
+            title=_("Synchronization Summary"),
+            indicator="green" if failed == 0 else "orange"
+        )
+
+    except Exception as e:
+        frappe.log_error(f"Failed to fetch customers from Shopify: {frappe.get_traceback()}", 'Shopify Customer Sync Error')
+        frappe.throw(f"Error syncing customers from Shopify: {e}")
 
 
 def handle_customer_addresses(customer, customer_data):
